@@ -1,3 +1,4 @@
+require('dotenv').config();
 const express = require("express");
 const cors = require("cors");
 const session = require("express-session");
@@ -7,7 +8,7 @@ const db = require("./db");
 const app = express();
 
 // Configurar CORS para aceitar requisições do frontend hospedado na Vercel
-app.use(cors({ origin: "https://common-area.vercel.app", credentials: true }));
+app.use(cors({ origin: process.env.FRONTEND_URL, credentials: true }));
 app.use(express.json());
 app.use(
   session({
@@ -28,7 +29,7 @@ app.get(
   "/auth/google/callback",
   passport.authenticate("google", { failureRedirect: "/" }),
   (req, res) => {
-    res.redirect("https://common-area.vercel.app/dashboard");
+    res.redirect(`${process.env.FRONTEND_URL}dashboard`);
   }
 );
 
