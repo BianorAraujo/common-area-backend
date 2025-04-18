@@ -1,20 +1,45 @@
-require('dotenv').config();
+require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const session = require("express-session");
+const Sequelize = require("sequelize");
+const SequelizeStore = require("connect-session-sequelize")(session.Store);
 const passport = require("./auth");
 const db = require("./db");
 
 const app = express();
 
-// Configurar CORS para aceitar requisições do frontend hospedado na Vercel
-app.use(cors({ origin: process.env.FRONTEND_URL, credentials: true }));
+// Configurar Sequelize para SQLite
+const sequelize = new Sequelize("sqlite://session.db", {
+  logging: false,
+});
+
+// Configurar armazenamento de sessões com Sequelize
+const sessionStore = new SequelizeStore({
+  db: sequelize,
+});
+sessionStore.sync();
+
+app.use(
+  cors({
+    origin: process.env.FRONTEND_URL,
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "DELETE"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+  })
+);
 app.use(express.json());
 app.use(
   session({
-    secret: process.env.SESSION_SECRET || "meu_segredo_aleatorio_123",
+    secret: process.env.SESSION_SECRET || "seu_segredo",
     resave: false,
     saveUninitialized: false,
+    store: sessionStore,
+    cookie: {
+      secure: process.env.NODE_ENV === "production" ? true : false,
+      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+      maxAge: 24 * 60 * 60 * 1000, // 24 horas
+    },
   })
 );
 app.use(passport.initialize());
@@ -22,18 +47,34 @@ app.use(passport.session());
 
 app.get(
   "/auth/google",
-  passport.authenticate("google", { scope: ["profile", "email"] })
+  passport.authenticate("google", { scope: ["openid", "profile", "email"] })
 );
 
 app.get(
   "/auth/google/callback",
-  passport.authenticate("google", { failureRedirect: "/" }),
-  (req, res) => {
-    res.redirect(`${process.env.FRONTEND_URL}/dashboard`);
+  (req, res, next) => {
+    passport.authenticate("google", (err, user, info) => {
+      if (err) {
+        console.error("Erro no callback do Google:", err);
+        return res.status(400).json({ error: err.message });
+      }
+      if (!user) {
+        return res.redirect("/");
+      }
+      req.logIn(user, (err) => {
+        if (err) {
+          console.error("Erro ao fazer login:", err);
+          return res.status(400).json({ error: err.message });
+        }
+        console.log("Usuário logado:", user);
+        return res.redirect(`${process.env.FRONTEND_URL}/dashboard`);
+      });
+    })(req, res, next);
   }
 );
 
 app.get("/auth/user", (req, res) => {
+  console.log("Requisição para /auth/user, req.user:", req.user);
   if (req.user) {
     res.json(req.user);
   } else {
@@ -62,7 +103,6 @@ app.get("/reservations/:building", (req, res) => {
 app.post("/reservations", (req, res) => {
   const { title, start, end, building, userId, userName } = req.body;
 
-  // Verificar sobreposição
   db.all(
     `SELECT * FROM reservations WHERE building = ? AND (
       (start <= ? AND end >= ?) OR 
@@ -76,7 +116,6 @@ app.post("/reservations", (req, res) => {
         return res.status(400).json({ error: "Horário já reservado para este prédio." });
       }
 
-      // Se não houver sobreposição, criar a reserva
       db.run(
         `INSERT INTO reservations (title, start, end, building, userId, userName) VALUES (?, ?, ?, ?, ?, ?)`,
         [title, start, end, building, userId, userName],
