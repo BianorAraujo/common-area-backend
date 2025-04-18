@@ -45,6 +45,12 @@ app.use(
 app.use(passport.initialize());
 app.use(passport.session());
 
+// Log para depurar todas as requisições recebidas
+app.use((req, res, next) => {
+  console.log(`[${new Date().toISOString()}] ${req.method} ${req.url} - Session ID: ${req.sessionID}`);
+  next();
+});
+
 app.get(
   "/auth/google",
   passport.authenticate("google", { scope: ["openid", "profile", "email"] })
@@ -59,6 +65,7 @@ app.get(
         return res.status(400).json({ error: err.message });
       }
       if (!user) {
+        console.log("Nenhum usuário retornado pelo Google");
         return res.redirect("/");
       }
       req.logIn(user, (err) => {
@@ -67,6 +74,7 @@ app.get(
           return res.status(400).json({ error: err.message });
         }
         console.log("Usuário logado:", user);
+        console.log("Sessão após login:", req.session);
         return res.redirect(`${process.env.FRONTEND_URL}/dashboard`);
       });
     })(req, res, next);
@@ -74,16 +82,21 @@ app.get(
 );
 
 app.get("/auth/user", (req, res) => {
-  console.log("Requisição para /auth/user, req.user:", req.user);
+  console.log("Requisição para /auth/user");
+  console.log("Session ID:", req.sessionID);
+  console.log("Sessão:", req.session);
+  console.log("Usuário na sessão:", req.user);
   if (req.user) {
     res.json(req.user);
   } else {
+    console.log("Usuário não autenticado, retornando 401");
     res.status(401).json({ error: "Não autenticado" });
   }
 });
 
 app.get("/auth/logout", (req, res) => {
   req.logout(() => {
+    console.log("Logout realizado");
     res.status(200).json({ success: true });
   });
 });
