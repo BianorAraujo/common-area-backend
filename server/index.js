@@ -18,14 +18,18 @@ const sequelize = new Sequelize("sqlite://session.db", {
 const sessionStore = new SequelizeStore({
   db: sequelize,
 });
-sessionStore.sync();
+sessionStore.sync().then(() => {
+  console.log("SequelizeStore sincronizado com sucesso");
+}).catch(err => {
+  console.error("Erro ao sincronizar SequelizeStore:", err);
+});
 
 app.use(
   cors({
     origin: process.env.FRONTEND_URL,
     credentials: true,
     methods: ["GET", "POST", "PUT", "DELETE"],
-    allowedHeaders: ["Content-Type", "Authorization"],
+    allowedHeaders: ["Content-Type", "Authorization", "Cookie"],
   })
 );
 app.use(express.json());
@@ -34,11 +38,13 @@ app.use(
     secret: process.env.SESSION_SECRET || "seu_segredo",
     resave: false,
     saveUninitialized: false,
-    store: new session.MemoryStore(),
+    store: sessionStore,
     cookie: {
       secure: process.env.NODE_ENV === "production" ? true : false,
       sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+      httpOnly: true,
       maxAge: 24 * 60 * 60 * 1000, // 24 horas
+      path: "/",
     },
   })
 );
@@ -47,7 +53,6 @@ app.use(passport.session());
 
 // Log para depurar todas as requisições recebidas
 app.use((req, res, next) => {
-  console.log("CORS Origin:", process.env.FRONTEND_URL);
   console.log(`[${new Date().toISOString()}] ${req.method} ${req.url} - Session ID: ${req.sessionID}`);
   next();
 });
@@ -66,7 +71,7 @@ app.get(
         return res.status(400).json({ error: err.message });
       }
       if (!user) {
-        console.log("Nenhum usuário retornado pelo Google");
+        console.log("Nenhum usuário retornado pelo Google", info);
         return res.redirect("/");
       }
       req.logIn(user, (err) => {
@@ -76,6 +81,8 @@ app.get(
         }
         console.log("Usuário logado:", user);
         console.log("Sessão após login:", req.session);
+        console.log("Cookie enviado:", req.session.cookie);
+        res.setHeader("Set-Cookie", `connect.sid=${req.sessionID}; Secure; HttpOnly; SameSite=None; Path=/`);
         return res.redirect(`${process.env.FRONTEND_URL}/dashboard`);
       });
     })(req, res, next);
@@ -86,8 +93,8 @@ app.get("/auth/user", (req, res) => {
   console.log("Requisição para /auth/user");
   console.log("Session ID:", req.sessionID);
   console.log("Sessão:", req.session);
-  console.log("Usuário na sessão:", req.user);
   console.log("Cookies:", req.cookies);
+  console.log("Headers:", req.headers);
   if (req.user) {
     res.json(req.user);
   } else {
