@@ -54,6 +54,7 @@ app.use(passport.session());
 // Log para depurar todas as requisições recebidas
 app.use((req, res, next) => {
   console.log(`[${new Date().toISOString()}] ${req.method} ${req.url} - Session ID: ${req.sessionID}`);
+  console.log("Raw Cookie Header:", req.headers.cookie || "Nenhum cookie enviado");
   next();
 });
 
@@ -82,6 +83,7 @@ app.get(
         console.log("Usuário logado:", user);
         console.log("Sessão após login:", req.session);
         console.log("Cookie enviado:", req.session.cookie);
+        console.log("Session ID definido:", req.sessionID);
         //res.setHeader("Set-Cookie", `connect.sid=${req.sessionID}; Secure; HttpOnly; SameSite=None; Path=/`);
         return res.redirect(`${process.env.FRONTEND_URL}/dashboard`);
       });
@@ -94,7 +96,9 @@ app.get("/auth/user", (req, res) => {
   console.log("Session ID:", req.sessionID);
   console.log("Sessão:", req.session);
   console.log("Cookies:", req.cookies);
+  console.log("Raw Cookie Header:", req.headers.cookie || "Nenhum cookie enviado");
   console.log("Headers:", req.headers);
+  console.log("Usuário na sessão:", req.user);
   if (req.user) {
     res.json(req.user);
   } else {
