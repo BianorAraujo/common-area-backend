@@ -73,7 +73,7 @@ app.get(
       }
       if (!user) {
         console.log("Nenhum usuário retornado pelo Google", info);
-        return res.redirect("/");
+        return res.status(401).json({ error: "Autenticação falhou" });
       }
       req.logIn(user, (err) => {
         if (err) {
@@ -85,6 +85,9 @@ app.get(
         console.log("Cookie enviado:", req.session.cookie);
         console.log("Session ID definido:", req.sessionID);
         //res.setHeader("Set-Cookie", `connect.sid=${req.sessionID}; Secure; HttpOnly; SameSite=None; Path=/`);
+        res.on("finish", () => {
+          console.log("Set-Cookie Header:", res.get("Set-Cookie") || "Nenhum Set-Cookie enviado");
+        });
         return res.redirect(`${process.env.FRONTEND_URL}/dashboard`);
       });
     })(req, res, next);
