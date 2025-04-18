@@ -2,27 +2,27 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const session = require("express-session");
-const Sequelize = require("sequelize");
-const SequelizeStore = require("connect-session-sequelize")(session.Store);
+//const Sequelize = require("sequelize");
+//const SequelizeStore = require("connect-session-sequelize")(session.Store);
 const passport = require("./auth");
 const db = require("./db");
 
 const app = express();
 
-// Configurar Sequelize para SQLite
-const sequelize = new Sequelize("sqlite://session.db", {
-  logging: false,
-});
+//// Configurar Sequelize para SQLite
+// const sequelize = new Sequelize("sqlite://session.db", {
+//   logging: false,
+// });
 
-// Configurar armazenamento de sessões com Sequelize
-const sessionStore = new SequelizeStore({
-  db: sequelize,
-});
-sessionStore.sync().then(() => {
-  console.log("SequelizeStore sincronizado com sucesso");
-}).catch(err => {
-  console.error("Erro ao sincronizar SequelizeStore:", err);
-});
+//// Configurar armazenamento de sessões com Sequelize
+// const sessionStore = new SequelizeStore({
+//   db: sequelize,
+// });
+// sessionStore.sync().then(() => {
+//   console.log("SequelizeStore sincronizado com sucesso");
+// }).catch(err => {
+//   console.error("Erro ao sincronizar SequelizeStore:", err);
+// });
 
 app.use(
   cors({
@@ -38,7 +38,7 @@ app.use(
     secret: process.env.SESSION_SECRET || "seu_segredo",
     resave: false,
     saveUninitialized: false,
-    store: sessionStore,
+    store: new session.MemoryStore(), // Usar MemoryStore para teste
     cookie: {
       secure: process.env.NODE_ENV === "production" ? true : false,
       sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
@@ -82,7 +82,7 @@ app.get(
         console.log("Usuário logado:", user);
         console.log("Sessão após login:", req.session);
         console.log("Cookie enviado:", req.session.cookie);
-        res.setHeader("Set-Cookie", `connect.sid=${req.sessionID}; Secure; HttpOnly; SameSite=None; Path=/`);
+        //res.setHeader("Set-Cookie", `connect.sid=${req.sessionID}; Secure; HttpOnly; SameSite=None; Path=/`);
         return res.redirect(`${process.env.FRONTEND_URL}/dashboard`);
       });
     })(req, res, next);
