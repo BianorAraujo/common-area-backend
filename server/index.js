@@ -34,7 +34,7 @@ app.use(
     secret: process.env.SESSION_SECRET || "seu_segredo",
     resave: false,
     saveUninitialized: false,
-    store: sessionStore,
+    store: new session.MemoryStore(),
     cookie: {
       secure: process.env.NODE_ENV === "production" ? true : false,
       sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
@@ -47,6 +47,7 @@ app.use(passport.session());
 
 // Log para depurar todas as requisições recebidas
 app.use((req, res, next) => {
+  console.log("CORS Origin:", process.env.FRONTEND_URL);
   console.log(`[${new Date().toISOString()}] ${req.method} ${req.url} - Session ID: ${req.sessionID}`);
   next();
 });
@@ -86,6 +87,7 @@ app.get("/auth/user", (req, res) => {
   console.log("Session ID:", req.sessionID);
   console.log("Sessão:", req.session);
   console.log("Usuário na sessão:", req.user);
+  console.log("Cookies:", req.cookies);
   if (req.user) {
     res.json(req.user);
   } else {
