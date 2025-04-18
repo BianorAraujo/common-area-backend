@@ -12,7 +12,7 @@ app.use(cors({ origin: process.env.FRONTEND_URL, credentials: true }));
 app.use(express.json());
 app.use(
   session({
-    secret: process.env.SESSION_SECRET || "seu_segredo",
+    secret: process.env.SESSION_SECRET || "meu_segredo_aleatorio_123",
     resave: false,
     saveUninitialized: false,
   })
@@ -29,7 +29,7 @@ app.get(
   "/auth/google/callback",
   passport.authenticate("google", { failureRedirect: "/" }),
   (req, res) => {
-    res.redirect(`${process.env.FRONTEND_URL}dashboard`);
+    res.redirect(`${process.env.FRONTEND_URL}/dashboard`);
   }
 );
 
