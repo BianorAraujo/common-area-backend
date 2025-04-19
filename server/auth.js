@@ -15,14 +15,15 @@ passport.use(
         name: profile.displayName,
         email: profile.emails[0].value,
       };
-      db.run(
-        `INSERT OR REPLACE INTO users (id, name, email) VALUES (?, ?, ?)`,
-        [user.id, user.name, user.email],
-        (err) => {
-          if (err) return done(err);
-          return done(null, user);
-        }
-      );
+      // db.run(
+      //   `INSERT OR REPLACE INTO users (id, name, email) VALUES (?, ?, ?)`,
+      //   [user.id, user.name, user.email],
+      //   (err) => {
+      //     if (err) return done(err);
+      //     return done(null, user);
+      //   }
+      //);
+      return done(null, user);
     }
   )
 );

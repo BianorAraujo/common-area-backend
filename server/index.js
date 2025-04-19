@@ -1,63 +1,117 @@
 require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
-const session = require("express-session");
-//const Sequelize = require("sequelize");
-//const SequelizeStore = require("connect-session-sequelize")(session.Store);
-const passport = require("./auth");
-const db = require("./db");
+const passport = require("passport");
+const GoogleStrategy = require("passport-google-oauth20").Strategy;
+const jwt = require("jsonwebtoken");
+const sqlite3 = require("sqlite3").verbose();
 
 const app = express();
 
-//// Configurar Sequelize para SQLite
-// const sequelize = new Sequelize("sqlite://session.db", {
-//   logging: false,
-// });
+// Configurar banco de dados SQLite
+const db = new sqlite3.Database("./reservations.db", (err) => {
+  if (err) {
+    console.error("Erro ao conectar ao banco de dados:", err);
+  } else {
+    console.log("Conectado ao banco de dados SQLite");
+  }
+});
 
-//// Configurar armazenamento de sessões com Sequelize
-// const sessionStore = new SequelizeStore({
-//   db: sequelize,
-// });
-// sessionStore.sync().then(() => {
-//   console.log("SequelizeStore sincronizado com sucesso");
-// }).catch(err => {
-//   console.error("Erro ao sincronizar SequelizeStore:", err);
-// });
+// Criar tabelas
+db.serialize(() => {
+  db.run(
+    `CREATE TABLE IF NOT EXISTS reservations (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      title TEXT,
+      start TEXT,
+      end TEXT,
+      building TEXT,
+      userId TEXT,
+      userName TEXT
+    )`
+  );
+  db.run(
+    `CREATE TABLE IF NOT EXISTS history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      action TEXT,
+      eventId INTEGER,
+      eventDetails TEXT,
+      userName TEXT,
+      timestamp TEXT
+    )`
+  );
+});
 
+// Configurar middleware
 app.use(
   cors({
-    origin: process.env.FRONTEND_URL,
+    origin: process.env.FRONTEND_URL || "http://localhost:5173",
     credentials: true,
     methods: ["GET", "POST", "PUT", "DELETE"],
-    allowedHeaders: ["Content-Type", "Authorization", "Cookie"],
+    allowedHeaders: ["Content-Type", "Authorization"],
   })
 );
 app.use(express.json());
-app.use(
-  session({
-    secret: process.env.SESSION_SECRET || "seu_segredo",
-    resave: false,
-    saveUninitialized: false,
-    store: new session.MemoryStore(), // Usar MemoryStore para teste
-    cookie: {
-      secure: process.env.NODE_ENV === "production" ? true : false,
-      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
-      httpOnly: true,
-      maxAge: 24 * 60 * 60 * 1000, // 24 horas
-      path: "/",
-    },
-  })
-);
-app.use(passport.initialize());
-app.use(passport.session());
 
-// Log para depurar todas as requisições recebidas
-app.use((req, res, next) => {
-  console.log(`[${new Date().toISOString()}] ${req.method} ${req.url} - Session ID: ${req.sessionID}`);
-  console.log("Raw Cookie Header:", req.headers.cookie || "Nenhum cookie enviado");
-  next();
+// Configurar Passport para Google OAuth
+passport.use(
+  new GoogleStrategy(
+    {
+      clientID: process.env.GOOGLE_CLIENT_ID,
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+      callbackURL: `${
+        process.env.BACKEND_URL || "http://localhost:3000"
+      }/auth/google/callback`,
+    },
+    (accessToken, refreshToken, profile, done) => {
+      const user = {
+        id: profile.id,
+        name: profile.displayName,
+        email: profile.emails[0].value,
+      };
+      return done(null, user);
+    }
+  )
+);
+
+passport.serializeUser((user, done) => {
+  done(null, user);
+});
+passport.deserializeUser((user, done) => {
+  done(null, user);
 });
 
+app.use(passport.initialize());
+
+// Função para gerar JWT
+const generateToken = (user) => {
+  return jwt.sign(
+    { id: user.id, name: user.name, email: user.email },
+    process.env.JWT_SECRET || "seu_jwt_segredo",
+    { expiresIn: "24h" }
+  );
+};
+
+// Middleware para verificar JWT
+const authenticateJWT = (req, res, next) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    console.log("Nenhum token JWT fornecido");
+    return res.status(401).json({ error: "Não autenticado" });
+  }
+
+  const token = authHeader.split(" ")[1];
+  jwt.verify(token, process.env.JWT_SECRET || "seu_jwt_segredo", (err, user) => {
+    if (err) {
+      console.log("Erro ao verificar JWT:", err.message);
+      return res.status(403).json({ error: "Token inválido" });
+    }
+    req.user = user;
+    next();
+  });
+};
+
+// Rotas de autenticação
 app.get(
   "/auth/google",
   passport.authenticate("google", { scope: ["openid", "profile", "email"] })
@@ -65,116 +119,113 @@ app.get(
 
 app.get(
   "/auth/google/callback",
-  (req, res, next) => {
-    passport.authenticate("google", (err, user, info) => {
-      if (err) {
-        console.error("Erro no callback do Google:", err);
-        return res.status(400).json({ error: err.message });
-      }
-      if (!user) {
-        console.log("Nenhum usuário retornado pelo Google", info);
-        return res.status(401).json({ error: "Autenticação falhou" });
-      }
-      req.logIn(user, (err) => {
-        if (err) {
-          console.error("Erro ao fazer login:", err);
-          return res.status(400).json({ error: err.message });
-        }
-        console.log("Usuário logado:", user);
-        console.log("Sessão após login:", req.session);
-        console.log("Cookie enviado:", req.session.cookie);
-        console.log("Session ID definido:", req.sessionID);
-        //res.setHeader("Set-Cookie", `connect.sid=${req.sessionID}; Secure; HttpOnly; SameSite=None; Path=/`);
-        res.on("finish", () => {
-          console.log("Set-Cookie Header:", res.get("Set-Cookie") || "Nenhum Set-Cookie enviado");
-        });
-        return res.redirect(`${process.env.FRONTEND_URL}/dashboard`);
-      });
-    })(req, res, next);
+  passport.authenticate("google", { session: false }),
+  (req, res) => {
+    const user = req.user;
+    console.log("Usuário logado:", user);
+    const token = generateToken(user);
+    console.log("JWT gerado:", token);
+    // Redirecionar para o frontend com o token como parâmetro de query
+    const redirectUrl = `${
+      process.env.FRONTEND_URL || "http://localhost:5173"
+    }/dashboard?token=${encodeURIComponent(token)}`;
+    console.log("Redirecionando para:", redirectUrl);
+    res.redirect(redirectUrl);
   }
 );
 
-app.get("/auth/user", (req, res) => {
+app.get("/auth/user", authenticateJWT, (req, res) => {
   console.log("Requisição para /auth/user");
-  console.log("Session ID:", req.sessionID);
-  console.log("Sessão:", req.session);
-  console.log("Cookies:", req.cookies);
-  console.log("Raw Cookie Header:", req.headers.cookie || "Nenhum cookie enviado");
-  console.log("Headers:", req.headers);
-  console.log("Usuário na sessão:", req.user);
-  if (req.user) {
-    res.json(req.user);
-  } else {
-    console.log("Usuário não autenticado, retornando 401");
-    res.status(401).json({ error: "Não autenticado" });
-  }
+  console.log("Usuário autenticado:", req.user);
+  res.json(req.user);
 });
 
 app.get("/auth/logout", (req, res) => {
-  req.logout(() => {
-    console.log("Logout realizado");
-    res.status(200).json({ success: true });
+  console.log("Logout solicitado");
+  res.json({ success: true });
+});
+
+// Rotas de reservas
+app.get("/reservations/:building", authenticateJWT, (req, res) => {
+  const { building } = req.params;
+  db.all(`SELECT * FROM reservations WHERE building = ?`, [building], (err, rows) => {
+    if (err) {
+      console.error("Erro ao buscar reservas:", err);
+      return res.status(500).json({ error: err.message });
+    }
+    res.json(rows);
   });
 });
 
-app.get("/reservations/:building", (req, res) => {
-  const { building } = req.params;
-  db.all(
-    `SELECT * FROM reservations WHERE building = ?`,
-    [building],
-    (err, rows) => {
-      if (err) return res.status(500).json({ error: err.message });
-      res.json(rows);
+app.post("/reservations", authenticateJWT, (req, res) => {
+    console.log("Recebendo requisição para /reservations:", req.body);
+    const { title, start, end, building, userId, userName } = req.body;
+  
+    if (!title || !start || !end || !building || !userId || !userName) {
+      console.log("Campos obrigatórios ausentes:", { title, start, end, building, userId, userName });
+      return res.status(400).json({ error: "Todos os campos são obrigatórios." });
     }
-  );
-});
-
-app.post("/reservations", (req, res) => {
-  const { title, start, end, building, userId, userName } = req.body;
-
-  db.all(
-    `SELECT * FROM reservations WHERE building = ? AND (
-      (start <= ? AND end >= ?) OR 
-      (start <= ? AND end >= ?) OR 
-      (start >= ? AND end <= ?)
-    )`,
-    [building, start, start, end, end, start, end],
-    (err, rows) => {
-      if (err) return res.status(500).json({ error: err.message });
-      if (rows.length > 0) {
-        return res.status(400).json({ error: "Horário já reservado para este prédio." });
-      }
-
-      db.run(
-        `INSERT INTO reservations (title, start, end, building, userId, userName) VALUES (?, ?, ?, ?, ?, ?)`,
-        [title, start, end, building, userId, userName],
-        function (err) {
-          if (err) return res.status(500).json({ error: err.message });
-          db.run(
-            `INSERT INTO history (action, eventId, eventDetails, userName, timestamp) VALUES (?, ?, ?, ?, ?)`,
-            [
-              "create",
-              this.lastID,
-              JSON.stringify({ title, start, end, building }),
-              userName,
-              new Date().toISOString(),
-            ]
-          );
-          res.json({ id: this.lastID });
+  
+    db.all(
+      `SELECT * FROM reservations WHERE building = ? AND (
+        (start <= ? AND end >= ?) OR 
+        (start <= ? AND end >= ?) OR 
+        (start >= ? AND end <= ?)
+      )`,
+      [building, start, start, end, end, start, end],
+      (err, rows) => {
+        if (err) {
+          console.error("Erro ao verificar reservas:", err);
+          return res.status(500).json({ error: err.message });
         }
-      );
-    }
-  );
-});
+        console.log("Reservas existentes:", rows);
+        if (rows.length > 0) {
+          console.log("Conflito de horário detectado:", rows);
+          return res.status(400).json({ error: "Horário já reservado para este prédio." });
+        }
+  
+        db.run(
+          `INSERT INTO reservations (title, start, end, building, userId, userName) VALUES (?, ?, ?, ?, ?, ?)`,
+          [title, start, end, building, userId, userName],
+          function (err) {
+            if (err) {
+              console.error("Erro ao criar reserva:", err);
+              return res.status(500).json({ error: err.message });
+            }
+            console.log("Reserva criada com ID:", this.lastID);
+            db.run(
+              `INSERT INTO history (action, eventId, eventDetails, userName, timestamp) VALUES (?, ?, ?, ?, ?)`,
+              [
+                "create",
+                this.lastID,
+                JSON.stringify({ title, start, end, building }),
+                userName,
+                new Date().toISOString(),
+              ],
+              (err) => {
+                if (err) {
+                  console.error("Erro ao registrar histórico:", err);
+                }
+              }
+            );
+            res.json({ id: this.lastID });
+          }
+        );
+      }
+    );
+  });
 
-app.put("/reservations/:id", (req, res) => {
+app.put("/reservations/:id", authenticateJWT, (req, res) => {
   const { id } = req.params;
   const { start, end, userName } = req.body;
   db.run(
     `UPDATE reservations SET start = ?, end = ? WHERE id = ?`,
     [start, end, id],
     function (err) {
-      if (err) return res.status(500).json({ error: err.message });
+      if (err) {
+        console.error("Erro ao atualizar reserva:", err);
+        return res.status(500).json({ error: err.message });
+      }
       db.run(
         `INSERT INTO history (action, eventId, eventDetails, userName, timestamp) VALUES (?, ?, ?, ?, ?)`,
         [
@@ -190,11 +241,14 @@ app.put("/reservations/:id", (req, res) => {
   );
 });
 
-app.delete("/reservations/:id", (req, res) => {
+app.delete("/reservations/:id", authenticateJWT, (req, res) => {
   const { id } = req.params;
   const { userName } = req.body;
   db.run(`DELETE FROM reservations WHERE id = ?`, [id], function (err) {
-    if (err) return res.status(500).json({ error: err.message });
+    if (err) {
+      console.error("Erro ao deletar reserva:", err);
+      return res.status(500).json({ error: err.message });
+    }
     db.run(
       `INSERT INTO history (action, eventId, eventDetails, userName, timestamp) VALUES (?, ?, ?, ?, ?)`,
       ["delete", id, "{}", userName, new Date().toISOString()]
@@ -203,9 +257,12 @@ app.delete("/reservations/:id", (req, res) => {
   });
 });
 
-app.get("/history", (req, res) => {
+app.get("/history", authenticateJWT, (req, res) => {
   db.all(`SELECT * FROM history ORDER BY timestamp DESC`, (err, rows) => {
-    if (err) return res.status(500).json({ error: err.message });
+    if (err) {
+      console.error("Erro ao buscar histórico:", err);
+      return res.status(500).json({ error: err.message });
+    }
     res.json(rows);
   });
 });
