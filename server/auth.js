@@ -7,7 +7,9 @@ passport.use(
     {
       clientID: process.env.GOOGLE_CLIENT_ID,
       clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-      callbackURL: `${process.env.BACKEND_URL}/auth/google/callback`,
+      callbackURL: `${
+        process.env.BACKEND_URL || "http://localhost:3000"
+      }/auth/google/callback`,
     },
     (accessToken, refreshToken, profile, done) => {
       const user = {
@@ -15,27 +17,16 @@ passport.use(
         name: profile.displayName,
         email: profile.emails[0].value,
       };
-      // db.run(
-      //   `INSERT OR REPLACE INTO users (id, name, email) VALUES (?, ?, ?)`,
-      //   [user.id, user.name, user.email],
-      //   (err) => {
-      //     if (err) return done(err);
-      //     return done(null, user);
-      //   }
-      //);
       return done(null, user);
     }
   )
 );
 
 passport.serializeUser((user, done) => {
-  done(null, user.id);
+  done(null, user);
 });
-
-passport.deserializeUser((id, done) => {
-  db.get(`SELECT * FROM users WHERE id = ?`, [id], (err, user) => {
-    done(err, user);
-  });
+passport.deserializeUser((user, done) => {
+  done(null, user);
 });
 
 module.exports = passport;

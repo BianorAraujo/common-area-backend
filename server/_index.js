@@ -1,213 +1,320 @@
-require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
-const session = require("express-session");
-//const Sequelize = require("sequelize");
-//const SequelizeStore = require("connect-session-sequelize")(session.Store);
-const passport = require("./auth");
-const db = require("./db");
+const jwt = require("jsonwebtoken");
+const bcrypt = require("bcrypt");
+const sqlite3 = require("sqlite3").verbose();
+require("dotenv").config();
 
 const app = express();
-
-//// Configurar Sequelize para SQLite
-// const sequelize = new Sequelize("sqlite://session.db", {
-//   logging: false,
-// });
-
-//// Configurar armazenamento de sessões com Sequelize
-// const sessionStore = new SequelizeStore({
-//   db: sequelize,
-// });
-// sessionStore.sync().then(() => {
-//   console.log("SequelizeStore sincronizado com sucesso");
-// }).catch(err => {
-//   console.error("Erro ao sincronizar SequelizeStore:", err);
-// });
-
-app.use(
-  cors({
-    origin: process.env.FRONTEND_URL,
-    credentials: true,
-    methods: ["GET", "POST", "PUT", "DELETE"],
-    allowedHeaders: ["Content-Type", "Authorization", "Cookie"],
-  })
-);
+app.use(cors({ origin: process.env.FRONTEND_URL }));
 app.use(express.json());
-app.use(
-  session({
-    secret: process.env.SESSION_SECRET || "seu_segredo",
-    resave: false,
-    saveUninitialized: false,
-    store: new session.MemoryStore(), // Usar MemoryStore para teste
-    cookie: {
-      secure: process.env.NODE_ENV === "production" ? true : false,
-      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
-      httpOnly: true,
-      maxAge: 24 * 60 * 60 * 1000, // 24 horas
-      path: "/",
-    },
-  })
-);
-app.use(passport.initialize());
-app.use(passport.session());
 
-// Log para depurar todas as requisições recebidas
-app.use((req, res, next) => {
-  console.log(`[${new Date().toISOString()}] ${req.method} ${req.url} - Session ID: ${req.sessionID}`);
-  console.log("Raw Cookie Header:", req.headers.cookie || "Nenhum cookie enviado");
-  next();
+const db = new sqlite3.Database("./database.db", (err) => {
+  if (err) console.error("Erro ao conectar ao banco de dados:", err);
+  else console.log("Conectado ao banco de dados SQLite");
 });
 
-app.get(
-  "/auth/google",
-  passport.authenticate("google", { scope: ["openid", "profile", "email"] })
-);
+const authenticateJWT = (req, res, next) => {
+  const token = req.headers.authorization?.split(" ")[1];
+  if (!token) return res.status(401).json({ error: "Token não fornecido" });
 
-app.get(
-  "/auth/google/callback",
-  (req, res, next) => {
-    passport.authenticate("google", (err, user, info) => {
+  jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
+    if (err) return res.status(403).json({ error: "Token inválido" });
+    req.user = user;
+    next();
+  });
+};
+
+app.post("/login", (req, res) => {
+  const { email, password } = req.body;
+  console.log("Tentativa de login:", { email });
+
+  db.get(`SELECT * FROM users WHERE email = ?`, [email], (err, user) => {
+    if (err) {
+      console.error("Erro ao buscar usuário:", err);
+      return res.status(500).json({ error: err.message });
+    }
+    if (!user) {
+      console.log("Usuário não encontrado:", email);
+      return res.status(401).json({ error: "Credenciais inválidas" });
+    }
+
+    bcrypt.compare(password, user.password, (err, result) => {
       if (err) {
-        console.error("Erro no callback do Google:", err);
-        return res.status(400).json({ error: err.message });
+        console.error("Erro ao comparar senhas:", err);
+        return res.status(500).json({ error: err.message });
       }
-      if (!user) {
-        console.log("Nenhum usuário retornado pelo Google", info);
-        return res.status(401).json({ error: "Autenticação falhou" });
+      if (!result) {
+        console.log("Senha incorreta para:", email);
+        return res.status(401).json({ error: "Credenciais inválidas" });
       }
-      req.logIn(user, (err) => {
-        if (err) {
-          console.error("Erro ao fazer login:", err);
-          return res.status(400).json({ error: err.message });
-        }
-        console.log("Usuário logado:", user);
-        console.log("Sessão após login:", req.session);
-        console.log("Cookie enviado:", req.session.cookie);
-        console.log("Session ID definido:", req.sessionID);
-        //res.setHeader("Set-Cookie", `connect.sid=${req.sessionID}; Secure; HttpOnly; SameSite=None; Path=/`);
-        res.on("finish", () => {
-          console.log("Set-Cookie Header:", res.get("Set-Cookie") || "Nenhum Set-Cookie enviado");
-        });
-        return res.redirect(`${process.env.FRONTEND_URL}/dashboard`);
+
+      const token = jwt.sign({ id: user.id, email: user.email, name: user.name }, process.env.JWT_SECRET, {
+        expiresIn: "1h",
       });
-    })(req, res, next);
-  }
-);
-
-app.get("/auth/user", (req, res) => {
-  console.log("Requisição para /auth/user");
-  console.log("Session ID:", req.sessionID);
-  console.log("Sessão:", req.session);
-  console.log("Cookies:", req.cookies);
-  console.log("Raw Cookie Header:", req.headers.cookie || "Nenhum cookie enviado");
-  console.log("Headers:", req.headers);
-  console.log("Usuário na sessão:", req.user);
-  if (req.user) {
-    res.json(req.user);
-  } else {
-    console.log("Usuário não autenticado, retornando 401");
-    res.status(401).json({ error: "Não autenticado" });
-  }
-});
-
-app.get("/auth/logout", (req, res) => {
-  req.logout(() => {
-    console.log("Logout realizado");
-    res.status(200).json({ success: true });
+      console.log("Login bem-sucedido:", { email, token: "..." });
+      res.json({ token });
+    });
   });
 });
 
-app.get("/reservations/:building", (req, res) => {
-  const { building } = req.params;
-  db.all(
-    `SELECT * FROM reservations WHERE building = ?`,
-    [building],
-    (err, rows) => {
-      if (err) return res.status(500).json({ error: err.message });
-      res.json(rows);
+app.get("/auth/user", authenticateJWT, (req, res) => {
+  db.get(`SELECT id, name, email FROM users WHERE id = ?`, [req.user.id], (err, user) => {
+    if (err) {
+      console.error("Erro ao buscar usuário autenticado:", err);
+      return res.status(500).json({ error: err.message });
     }
-  );
+    if (!user) {
+      console.log("Usuário autenticado não encontrado:", req.user.id);
+      return res.status(404).json({ error: "Usuário não encontrado" });
+    }
+    console.log("Usuário autenticado retornado:", user);
+    res.json(user);
+  });
 });
 
-app.post("/reservations", (req, res) => {
-  const { title, start, end, building, userId, userName } = req.body;
+app.get("/buildings", authenticateJWT, (req, res) => {
+  db.all(`SELECT name FROM buildings`, [], (err, rows) => {
+    if (err) {
+      console.error("Erro ao buscar prédios:", err);
+      return res.status(500).json({ error: err.message });
+    }
+    console.log("Prédios retornados:", rows);
+    res.json(rows);
+  });
+});
+
+app.get("/reservations/:building", authenticateJWT, (req, res) => {
+  const { building } = req.params;
+  console.log(`Buscando reservas para o prédio: ${building}`);
+  db.all(`SELECT * FROM reservations WHERE building = ?`, [building], (err, rows) => {
+    if (err) {
+      console.error("Erro ao buscar reservas:", err);
+      return res.status(500).json({ error: err.message });
+    }
+    console.log(`Reservas encontradas para ${building}:`, rows.length);
+    res.json(rows);
+  });
+});
+
+app.post("/reservations", authenticateJWT, (req, res) => {
+  const { start, end, building, userId, userName } = req.body;
+  console.log("Recebendo requisição para /reservations:", { start, end, building, userId, userName });
+
+  if (!start || !end || !building || !userId || !userName) {
+    console.log("Dados incompletos para reserva:", req.body);
+    return res.status(400).json({ error: "Todos os campos são obrigatórios" });
+  }
+
+  const startDate = new Date(start);
+  const endDate = new Date(end);
+  if (isNaN(startDate) || isNaN(endDate)) {
+    console.log("Datas inválidas:", { start, end });
+    return res.status(400).json({ error: "Datas inválidas" });
+  }
+  if (endDate <= startDate) {
+    console.log("Horário final deve ser após o inicial:", { start, end });
+    return res.status(400).json({ error: "O horário final deve ser após o inicial" });
+  }
 
   db.all(
     `SELECT * FROM reservations WHERE building = ? AND (
-      (start <= ? AND end >= ?) OR 
-      (start <= ? AND end >= ?) OR 
+      (start <= ? AND end >= ?) OR
+      (start <= ? AND end >= ?) OR
       (start >= ? AND end <= ?)
     )`,
-    [building, start, start, end, end, start, end],
-    (err, rows) => {
-      if (err) return res.status(500).json({ error: err.message });
-      if (rows.length > 0) {
-        return res.status(400).json({ error: "Horário já reservado para este prédio." });
+    [building, end, start, start, start, start, end],
+    (err, conflictingReservations) => {
+      if (err) {
+        console.error("Erro ao verificar conflitos:", err);
+        return res.status(500).json({ error: err.message });
+      }
+      if (conflictingReservations.length > 0) {
+        console.log("Conflito de reserva encontrado:", conflictingReservations);
+        return res.status(409).json({ error: "Conflito com outra reserva" });
       }
 
       db.run(
-        `INSERT INTO reservations (title, start, end, building, userId, userName) VALUES (?, ?, ?, ?, ?, ?)`,
-        [title, start, end, building, userId, userName],
+        `INSERT INTO reservations (start, end, building, userId, userName) VALUES (?, ?, ?, ?, ?)`,
+        [start, end, building, userId, userName],
         function (err) {
-          if (err) return res.status(500).json({ error: err.message });
+          if (err) {
+            console.error("Erro ao criar reserva:", err);
+            return res.status(500).json({ error: err.message });
+          }
+          console.log(`Reserva criada com ID: ${this.lastID}`);
+
           db.run(
-            `INSERT INTO history (action, eventId, eventDetails, userName, timestamp) VALUES (?, ?, ?, ?, ?)`,
+            `INSERT INTO history (reservationId, userId, action, details) VALUES (?, ?, ?, ?)`,
             [
-              "create",
               this.lastID,
-              JSON.stringify({ title, start, end, building }),
-              userName,
-              new Date().toISOString(),
-            ]
+              userId,
+              "create",
+              JSON.stringify({ building, start, end, userName, action: "created" }),
+            ],
+            (err) => {
+              if (err) {
+                console.error("Erro ao registrar no histórico:", err);
+                return res.status(500).json({ error: err.message });
+              }
+              console.log(`Histórico registrado para reserva ID: ${this.lastID}`);
+              res.status(201).json({ id: this.lastID });
+            }
           );
-          res.json({ id: this.lastID });
         }
       );
     }
   );
 });
 
-app.put("/reservations/:id", (req, res) => {
+app.put("/reservations/:id", authenticateJWT, (req, res) => {
   const { id } = req.params;
-  const { start, end, userName } = req.body;
-  db.run(
-    `UPDATE reservations SET start = ?, end = ? WHERE id = ?`,
-    [start, end, id],
-    function (err) {
-      if (err) return res.status(500).json({ error: err.message });
+  const { start, end, building, userId, userName } = req.body;
+  console.log("Recebendo requisição para PUT /reservations/:id:", { id, start, end, building, userId, userName });
+
+  if (!start || !end || !building || !userId || !userName) {
+    console.log("Dados incompletos para edição:", req.body);
+    return res.status(400).json({ error: "Todos os campos são obrigatórios" });
+  }
+
+  const startDate = new Date(start);
+  const endDate = new Date(end);
+  if (isNaN(startDate) || isNaN(endDate)) {
+    console.log("Datas inválidas:", { start, end });
+    return res.status(400).json({ error: "Datas inválidas" });
+  }
+  if (endDate <= startDate) {
+    console.log("Horário final deve ser após o inicial:", { start, end });
+    return res.status(400).json({ error: "O horário final deve ser após o inicial" });
+  }
+
+  // Verificar conflitos, excluindo a própria reserva
+  db.all(
+    `SELECT * FROM reservations WHERE building = ? AND id != ? AND (
+      (start <= ? AND end >= ?) OR
+      (start <= ? AND end >= ?) OR
+      (start >= ? AND end <= ?)
+    )`,
+    [building, id, end, start, start, start, start, end],
+    (err, conflictingReservations) => {
+      if (err) {
+        console.error("Erro ao verificar conflitos:", err);
+        return res.status(500).json({ error: err.message });
+      }
+      if (conflictingReservations.length > 0) {
+        console.log("Conflito de reserva encontrado:", conflictingReservations);
+        return res.status(409).json({ error: "Conflito com outra reserva" });
+      }
+
       db.run(
-        `INSERT INTO history (action, eventId, eventDetails, userName, timestamp) VALUES (?, ?, ?, ?, ?)`,
-        [
-          "update",
-          id,
-          JSON.stringify({ start, end }),
-          userName,
-          new Date().toISOString(),
-        ]
+        `UPDATE reservations SET start = ?, end = ?, building = ?, userId = ?, userName = ? WHERE id = ?`,
+        [start, end, building, userId, userName, id],
+        function (err) {
+          if (err) {
+            console.error("Erro ao atualizar reserva:", err);
+            return res.status(500).json({ error: err.message });
+          }
+          if (this.changes === 0) {
+            console.log(`Reserva ID ${id} não encontrada`);
+            return res.status(404).json({ error: "Reserva não encontrada" });
+          }
+          console.log(`Reserva ID ${id} atualizada`);
+
+          db.run(
+            `INSERT INTO history (reservationId, userId, action, details) VALUES (?, ?, ?, ?)`,
+            [
+              id,
+              userId,
+              "update",
+              JSON.stringify({ building, start, end, userName, action: "updated" }),
+            ],
+            (err) => {
+              if (err) {
+                console.error("Erro ao registrar no histórico:", err);
+                return res.status(500).json({ error: err.message });
+              }
+              console.log(`Histórico registrado para atualização da reserva ID: ${id}`);
+              res.json({ message: "Reserva atualizada" });
+            }
+          );
+        }
       );
-      res.json({ success: true });
     }
   );
 });
 
-app.delete("/reservations/:id", (req, res) => {
+app.delete("/reservations/:id", authenticateJWT, (req, res) => {
   const { id } = req.params;
-  const { userName } = req.body;
-  db.run(`DELETE FROM reservations WHERE id = ?`, [id], function (err) {
-    if (err) return res.status(500).json({ error: err.message });
-    db.run(
-      `INSERT INTO history (action, eventId, eventDetails, userName, timestamp) VALUES (?, ?, ?, ?, ?)`,
-      ["delete", id, "{}", userName, new Date().toISOString()]
-    );
-    res.json({ success: true });
+  const userId = req.user.id;
+  console.log(`Recebendo requisição para DELETE /reservations/${id}`);
+
+  db.get(`SELECT * FROM reservations WHERE id = ?`, [id], (err, reservation) => {
+    if (err) {
+      console.error("Erro ao buscar reserva:", err);
+      return res.status(500).json({ error: err.message });
+    }
+    if (!reservation) {
+      console.log(`Reserva ID ${id} não encontrada`);
+      return res.status(404).json({ error: "Reserva não encontrada" });
+    }
+
+    db.run(`DELETE FROM reservations WHERE id = ?`, [id], function (err) {
+      if (err) {
+        console.error("Erro ao excluir reserva:", err);
+        return res.status(500).json({ error: err.message });
+      }
+      if (this.changes === 0) {
+        console.log(`Reserva ID ${id} não encontrada`);
+        return res.status(404).json({ error: "Reserva não encontrada" });
+      }
+      console.log(`Reserva ID ${id} excluída`);
+
+      db.run(
+        `INSERT INTO history (reservationId, userId, action, details) VALUES (?, ?, ?, ?)`,
+        [
+          id,
+          userId,
+          "delete",
+          JSON.stringify({
+            building: reservation.building,
+            start: reservation.start,
+            end: reservation.end,
+            userName: reservation.userName,
+            action: "deleted",
+          }),
+        ],
+        (err) => {
+          if (err) {
+            console.error("Erro ao registrar no histórico:", err);
+            return res.status(500).json({ error: err.message });
+          }
+          console.log(`Histórico registrado para exclusão da reserva ID: ${id}`);
+          res.json({ message: "Reserva excluída" });
+        }
+      );
+    });
   });
 });
 
-app.get("/history", (req, res) => {
-  db.all(`SELECT * FROM history ORDER BY timestamp DESC`, (err, rows) => {
-    if (err) return res.status(500).json({ error: err.message });
-    res.json(rows);
-  });
+app.get("/history", authenticateJWT, (req, res) => {
+  const userId = req.user.id;
+  console.log(`Buscando histórico para usuário: ${userId}`);
+
+  db.all(
+    `SELECT h.*, json_extract(h.details, '$.building') as building
+     FROM history h
+     WHERE json_extract(h.details, '$.userId') = ?
+     ORDER BY h.createdAt DESC`,
+    [userId],
+    (err, rows) => {
+      if (err) {
+        console.error("Erro ao buscar histórico:", err);
+        return res.status(500).json({ error: err.message });
+      }
+      console.log(`Histórico retornado para usuário ${userId}:`, rows.length);
+      res.json(rows);
+    }
+  );
 });
 
 const PORT = process.env.PORT || 3000;
