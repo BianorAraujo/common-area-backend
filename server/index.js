@@ -33,14 +33,14 @@ const authenticateJWT = (req, res, next) => {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
     console.log("Nenhum token JWT fornecido");
-    return res.status(401).json({ error: "Não autenticado" });
+    return res.status(401).json({ error: "Not authenticated" });
   }
 
   const token = authHeader.split(" ")[1];
   jwt.verify(token, process.env.JWT_SECRET || "seu_jwt_segredo", (err, user) => {
     if (err) {
       console.log("Erro ao verificar JWT:", err.message);
-      return res.status(403).json({ error: "Token inválido" });
+      return res.status(403).json({ error: "Invalid token" });
     }
     req.user = user;
     next();
@@ -100,36 +100,32 @@ app.post("/reservations", authenticateJWT, (req, res) => {
 
   if (!start || !end || !building || !userId || !userName) {
     console.log("Campos obrigatórios ausentes:", { start, end, building, userId, userName });
-    return res.status(400).json({ error: "Todos os campos são obrigatórios." });
+    return res.status(400).json({ error: "All fields are required." });
   }
 
   const startDate = new Date(start);
   const endDate = new Date(end);
   if (isNaN(startDate) || isNaN(endDate)) {
     console.log("Datas inválidas:", { start, end });
-    return res.status(400).json({ error: "Datas inválidas" });
+    return res.status(400).json({ error: "Invalid dates." });
   }
   if (endDate <= startDate) {
     console.log("Horário final deve ser após o inicial:", { start, end });
-    return res.status(400).json({ error: "O horário final deve ser após o inicial" });
+    return res.status(400).json({ error: "End time must be after start time." });
   }
 
   db.all(
-    `SELECT * FROM reservations WHERE building = ? AND (
-      (start <= ? AND end >= ?) OR 
-      (start <= ? AND end >= ?) OR 
-      (start >= ? AND end <= ?)
-    )`,
-    [building, end, start, start, start, start, end],
+    `SELECT * FROM reservations WHERE building = ? AND (start < ? AND end > ?)`,
+    [building, end, start],
     (err, rows) => {
       if (err) {
         console.error("Erro ao verificar reservas:", err);
         return res.status(500).json({ error: err.message });
       }
-      console.log("Reservas existentes:", rows);
+      console.log("Reservas existentes verificadas:", rows);
       if (rows.length > 0) {
         console.log("Conflito de horário detectado:", rows);
-        return res.status(400).json({ error: "Horário já reservado para este prédio." });
+        return res.status(400).json({ error: "This time slot is already reserved." });
       }
 
       db.run(
@@ -170,36 +166,33 @@ app.put("/reservations/:id", authenticateJWT, (req, res) => {
 
   if (!start || !end || !building || !userId || !userName) {
     console.log("Campos obrigatórios ausentes:", { start, end, building, userId, userName });
-    return res.status(400).json({ error: "Todos os campos são obrigatórios." });
+    return res.status(400).json({ error: "All fields are required." });
   }
 
   const startDate = new Date(start);
   const endDate = new Date(end);
   if (isNaN(startDate) || isNaN(endDate)) {
     console.log("Datas inválidas:", { start, end });
-    return res.status(400).json({ error: "Datas inválidas" });
+    return res.status(400).json({ error: "Invalid dates." });
   }
   if (endDate <= startDate) {
     console.log("Horário final deve ser após o inicial:", { start, end });
-    return res.status(400).json({ error: "O horário final deve ser após o inicial" });
+    return res.status(400).json({ error: "End time must be after start time." });
   }
 
   // Verificar conflitos, excluindo a própria reserva
   db.all(
-    `SELECT * FROM reservations WHERE building = ? AND id != ? AND (
-      (start <= ? AND end >= ?) OR 
-      (start <= ? AND end >= ?) OR 
-      (start >= ? AND end <= ?)
-    )`,
-    [building, id, end, start, start, start, start, end],
+    `SELECT * FROM reservations WHERE building = ? AND id != ? AND (start < ? AND end > ?)`,
+    [building, id, end, start],
     (err, rows) => {
       if (err) {
         console.error("Erro ao verificar reservas:", err);
         return res.status(500).json({ error: err.message });
       }
+      console.log("Reservas existentes verificadas:", rows);
       if (rows.length > 0) {
         console.log("Conflito de horário detectado:", rows);
-        return res.status(400).json({ error: "Horário já reservado para este prédio." });
+        return res.status(400).json({ error: "This time slot is already reserved." });
       }
 
       db.run(
@@ -212,7 +205,7 @@ app.put("/reservations/:id", authenticateJWT, (req, res) => {
           }
           if (this.changes === 0) {
             console.log(`Reserva ID ${id} não encontrada`);
-            return res.status(404).json({ error: "Reserva não encontrada" });
+            return res.status(404).json({ error: "Reservation not found." });
           }
           console.log("Reserva atualizada com ID:", id);
           db.run(
@@ -249,7 +242,7 @@ app.delete("/reservations/:id", authenticateJWT, (req, res) => {
     }
     if (!reservation) {
       console.log(`Reserva ID ${id} não encontrada`);
-      return res.status(404).json({ error: "Reserva não encontrada" });
+      return res.status(404).json({ error: "Reservation not found." });
     }
 
     db.run(`DELETE FROM reservations WHERE id = ?`, [id], function (err) {
@@ -259,7 +252,7 @@ app.delete("/reservations/:id", authenticateJWT, (req, res) => {
       }
       if (this.changes === 0) {
         console.log(`Reserva ID ${id} não encontrada`);
-        return res.status(404).json({ error: "Reserva não encontrada" });
+        return res.status(404).json({ error: "Reservation not found." });
       }
       console.log("Reserva deletada com ID:", id);
       db.run(
