@@ -1,11 +1,11 @@
 {
   "name": "vesta",
   "version": "1.0.0",
-  "main": "index.js",
+  "main": "server.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "node server/index.js",
-    "dev": "concurrently \"node server/index.js\""
+    "start": "node server/server.js",
+    "dev": "concurrently \"node server/server.js\""
   },
   "keywords": [],
   "author": "",
